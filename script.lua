@@ -58,16 +58,16 @@ local PlayerControls = PlayerModule:GetControls()
 local Camera = workspace.CurrentCamera
 
 local Infinity = math.huge
-local fullRad = math.pi -- A full 3 radian or 180 degrees
+local fullRad = math.pi -- A full 3 radians or 180 degrees
 
-local Dividen = 2 -- The value that the stats that are distance based are divided by
+local Dividen = 2 -- The value that the stats that are distance based are divided by, to stop the ship from being too fast
 
-local CameraOffset: Vector3Value = ShipControls.CameraOffset -- A vector3 value used to offest the camera by the set amount (Used for camerashake in this case)
-local CameraLockedValue: BoolValue = ShipControls.CameraLocked -- A bool value allowing other scripts to forcibly lock & unlock the camera turning and centres camera to the front of the ship
-local CameraZoomValue: NumberValue = ShipControls.CameraZoom -- Sets the Camera Zoom to a certain value
-local MovementDisabled: BoolValue = ShipControls.MovementDisabled -- Disabling player control over ship
-local StopShip: BindableFunction = ShipControls.StopShip -- Allows other scripts to initiate a stopShip event, this will be cancelled if the player tries to move so use with value above
-local CameraMovementLocked: BoolValue = ShipControls.CameraMovementLocked -- a bool value simply disabling camera movement
+local CameraOffset: Vector3Value = ShipControls.CameraOffset -- A vector3 value used to offest the camera by the set amount (Used for camerashake in this case, Used while warping)
+local CameraLockedValue: BoolValue = ShipControls.CameraLocked -- A bool value allowing other scripts to forcibly lock & unlock the camera turning and centres camera to the front of the ship (Used when warp starts)
+local CameraZoomValue: NumberValue = ShipControls.CameraZoom -- Sets the Camera Zoom to a certain value (Used when warp starts)
+local MovementDisabled: BoolValue = ShipControls.MovementDisabled -- Disabling player control over ship (Used when in warp)
+local StopShip: BindableFunction = ShipControls.StopShip -- Allows other scripts to initiate a stopShip event, this will be cancelled if the player tries to move so use with value above (Used when player tries to warp when moving)
+local CameraMovementLocked: BoolValue = ShipControls.CameraMovementLocked -- a bool value simply disabling camera movement (Used for warping and other stuff)
 local CameraZoomLocked: BoolValue = ShipControls.CameraZoomLocked -- Disables zooming for the player (Used with CameraZoomValue)
 local InWarp: BoolValue = ShipControls.InWarp -- Used for engine VFX when in warp
 local IsCharging: BoolValue = ShipControls.IsCharging -- Safety Check for engine VFX for warping
@@ -295,21 +295,6 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end
 		
 	end
-	
-	
-	-- The 2 events below were explained at their values variable
-	TInsert(Connections, CameraLockedValue:GetPropertyChangedSignal("Value"):Connect(function()
-		if CameraLockedValue.Value == true then
-			CameraLocked = true
-			CameraAxis = Vector2.new(0,0)
-		else
-			CameraLocked = false
-		end
-	end))
-	
-	TInsert(Connections, CameraZoomValue:GetPropertyChangedSignal("Value"):Connect(function()
-		UpdateDistance(CameraZoomValue.Value)
-	end))
 
 	local CustomControls = {
 		[KeyCodes.X] = function(start) -- Stops the ship
@@ -342,6 +327,20 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end,
 	}
 	
+	-- The 3 functions below were explained at their objects variable
+	TInsert(Connections, CameraLockedValue:GetPropertyChangedSignal("Value"):Connect(function()
+		if CameraLockedValue.Value == true then
+			CameraLocked = true
+			CameraAxis = Vector2.new(0,0)
+		else
+			CameraLocked = false
+		end
+	end))
+
+	TInsert(Connections, CameraZoomValue:GetPropertyChangedSignal("Value"):Connect(function()
+		UpdateDistance(CameraZoomValue.Value)
+	end))
+	
 	StopShip.OnInvoke = function()
 		return CustomControls[KeyCodes.X](true)
 	end
@@ -351,7 +350,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 			if (CameraLocked == false) or (UserInputService:IsKeyDown(KeyCodes.LeftAlt)) then -- LeftAl allows player to peek even if the camera is locked
 				local Moved = UserInputService:GetMouseDelta()/(3 * (ZoomingIn and 3 or 1)) -- Getting the amount of pixels the mouse moved
 				local ResultX, ResultY = (Moved.X + CameraAxis.X) % 360, (Moved.Y + CameraAxis.Y) % 360 -- Adding it to the currentCameraAxis and making sure it's within 360 degrees
-				CameraAxis = Vector2.new(ResultX, ResultY) -- Updating CameraAxis with the new degrees
+				CameraAxis = Vector2.new(ResultX, ResultY) -- Updating CameraAxis with the new degrees, later gonna be used in the UpdateCamera function to determine camera angle
 			end
 		end
 	end))
@@ -376,8 +375,8 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end
 	end, false, table.unpack(CustomControlsList))
 
-	Camera.CameraType = Enum.CameraType.Scriptable
-
+	Camera.CameraType = Enum.CameraType.Scriptable -- Set to scriptable for us to be able to script the camera the way we would like it
+	
 	local function UpdateControls()
 		if not ChatBar:IsFocused() then -- I'am not using ContextActionService or UserInputService for *reasons* so i got the chatBar and making sure the player is not typing
 			for n, t in pairs(Controls) do
@@ -449,23 +448,24 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end
 	end
 	
-	local LastUpdate = 0
-
-	local LastPitch = 0
-	local LastYaw = 0
+	local LastUpdate = 0 -- Time passed since server was updated on ship speed, used to update the server on the ships speed every half a second
+	
+	-- the 2 variables below act as debounce to not send duplicate data to the server
+	local LastPitch = 0 -- Last pitch the server was updated on
+	local LastYaw = 0 -- Last yaw the server was updated on
 	
 	local function UpdateMovement(DeltaTime)
 		LastUpdate += DeltaTime
 		
-		CurrentSpeed.Value = Movement['Speed'][1].Value * Dividen
+		CurrentSpeed.Value = Movement['Speed'][1].Value  -- Updating the current speed value for other scripts to use
 		
 		-- The block of code below is used to update the server on the ships speed and if the player is currently pitching or yawing used to replicate engine effects to other clients
 		
-		local CPitch = Movement["Pitch"][1].Value
-		local CYaw = Movement["Yaw"][1].Value
+		local CPitch = Movement["Pitch"][1].Value -- Current Pitch
+		local CYaw = Movement["Yaw"][1].Value -- Current Yaw
 		
-		local NewPitch = if CPitch > 0 then 1 elseif CPitch < 0 then -1 else 0
-		local NewYaw = if CYaw > 0 then 1 elseif CYaw < 0 then -1 else 0
+		local NewPitch = if CPitch > 0 then NavigationStats["Pitch"].Max elseif CPitch < 0 then NavigationStats["Pitch"].Min else 0 -- We don't want as high as a quality of engine VFX for other players as current player so doing this saves on network
+		local NewYaw = if CYaw > 0 then NavigationStats["Yaw"].Max elseif CYaw < 0 then NavigationStats["Yaw"].Min else 0 -- Same as above
 		
 		if NewPitch ~= LastPitch then -- Making sure to not send duplicate data to server wasting network
 			UpdatePitch:FireServer(NewPitch) -- Updating the server on new pitch
@@ -487,8 +487,6 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 			-- I'am updating the velocities here since there's a return statement at the end of this scope wich wouldn't let the code below us wich includes the code to update the velocities to run
 			Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value)
 			Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value)
-			
-			if IsCharging.Value then return end -- Safety check
 			
 			if InWarp.Value == true then -- Custom engine VFX for when in warp
 				
@@ -526,7 +524,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 						end
 					end
 				end
-			else RenderEngine()
+			elseif IsCharging.Value == false then RenderEngine() -- The warp script stops your ship when you try to warp while moving and then warps you so we have to do this and we're checking if the ship Is Charging for the warp because if it is the Warp script is gonna be handling the engine VFX so we shouldn't mess with it here
 			end
 			
 			return
@@ -549,7 +547,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 
 			elseif SpeedValue < 0 then -- Stopping the ship if player is going backwards and is not holding down any control
 				local NewSpeed = SpeedValue - (AccelRange.Min * DeltaTime)/3 -- Getting the new speed, the passive stopping speed is divided by 3 to encourage players to stop manually by throttling down
-				Movement['Speed'][1].Value = math.clamp(NewSpeed, -Infinity, 0) -- Setting the new speed for later use
+				Movement['Speed'][1].Value = math.clamp(NewSpeed, -Infinity, 0) -- making sure the new speed is not over 0 & Setting the new speed for later use
 			end
 		end
 
@@ -585,8 +583,8 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 
 		RenderEngine()
 		
-		Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value) -- Using all the values gained from the block above and applying to angular velocity
-		Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value) -- Using all the values gained from the block above and applying to linear velocity
+		Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value) -- Using all the values gained from the block above and applying to angular velocity to make the ship rotate
+		Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value) -- Using all the values gained from the block above and applying to linear velocity to make the ship move
 	end
 	
 	-- Function below updates the camera CFrame with all values gathered
@@ -608,6 +606,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	
 	-- In the function below we are disconnecting all the connections we've made and resetting the client to its original state before this pilot was created
 	-- Currently i'am not setting the camera back to the player character since that will be handled by another script
+	-- Used when ship dies
 
 	local function Destroy()
 		for _, Connection in pairs(Connections) do
