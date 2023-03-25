@@ -4,6 +4,7 @@
 
 local ReplicatedStorage = game:GetService('ReplicatedStorage')
 local UserInputService = game:GetService('UserInputService')
+local ContextActionService = game:GetService('ContextActionService')
 local TweenService = game:GetService('TweenService')
 local PlayersService = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -42,7 +43,7 @@ local InfoModules = Modules:WaitForChild('Info')
 
 local RenderPriority = require(InfoModules:WaitForChild('RenderPriority'))
 local FormattedItems = require(InfoModules:WaitForChild('FormattedItems'))
-local ShipControls = require(Data:WaitForChild('ShipControls'))
+local ShipControls = require(Data:WaitForChild('ShipControls')) -- These are a list of features for other scripts to use
 
 local KeyCodes = Enum.KeyCode
 
@@ -56,23 +57,23 @@ local PlayerControls = PlayerModule:GetControls()
 
 local Camera = workspace.CurrentCamera
 
-local fullRad = math.pi
+local Infinity = math.huge
+local fullRad = math.pi -- A full 3 radian or 180 degrees
 
-local Dividen = 2
+local Dividen = 2 -- The value that the stats that are distance based are divided by
 
-local CameraOffset = ShipControls.CameraOffset
-local CameraLockedValue = ShipControls.CameraLocked
-local CameraZoomValue = ShipControls.CameraZoom
-local ZoomLocked = ShipControls.ZoomLocked
-local MovementDisabled = ShipControls.MovementDisabled
-local StopShip = ShipControls.StopShip
-local CameraMovementLocked = ShipControls.CameraMovementLocked
-local CameraZoomLocked = ShipControls.CameraZoomLocked
-local InWarp = ShipControls.InWarp
-local IsCharging = ShipControls.IsCharging
-local CurrentSpeed = ShipControls.CurrentSpeed
-local WarpTime = ShipControls.WarpTime
-local WarpTimeLeft = ShipControls.WarpTimeLeft
+local CameraOffset: Vector3Value = ShipControls.CameraOffset -- A vector3 value used to offest the camera by the set amount (Used for camerashake in this case)
+local CameraLockedValue: BoolValue = ShipControls.CameraLocked -- A bool value allowing other scripts to forcibly lock & unlock the camera turning and centres camera to the front of the ship
+local CameraZoomValue: NumberValue = ShipControls.CameraZoom -- Sets the Camera Zoom to a certain value
+local MovementDisabled: BoolValue = ShipControls.MovementDisabled -- Disabling player control over ship
+local StopShip: BindableFunction = ShipControls.StopShip -- Allows other scripts to initiate a stopShip event, this will be cancelled if the player tries to move so use with value above
+local CameraMovementLocked: BoolValue = ShipControls.CameraMovementLocked -- a bool value simply disabling camera movement
+local CameraZoomLocked: BoolValue = ShipControls.CameraZoomLocked -- Disables zooming for the player (Used with CameraZoomValue)
+local InWarp: BoolValue = ShipControls.InWarp -- Used for engine VFX when in warp
+local IsCharging: BoolValue = ShipControls.IsCharging -- Safety Check for engine VFX for warping
+local CurrentSpeed: NumberValue = ShipControls.CurrentSpeed -- Current Speed, a value set from this script for other scripts to use for stuff like VFX.
+local WarpTime: NumberValue = ShipControls.WarpTime -- How long has it been since the warp started (Used for engine VFX)
+local WarpTimeLeft: NumberValue = ShipControls.WarpTimeLeft -- How long until the warp ends (Used for engine VFX)
 
 local EngineAttachments = {
 	EndAttachment1 = 4.56,
@@ -80,7 +81,7 @@ local EngineAttachments = {
 	EndAttachment3 = 1.74,
 	EndAttachment4 = 0.97,
 	StartAttachment = 0
-}
+} -- A bunch of values used to position the engine attachments for the engine VFX  (multiplied by engine width so the engine VFX is to size) 
 
 local Windth1 = 0.194
 
@@ -89,27 +90,29 @@ local EngineBeams = {
 	Beam2 = 0.61,
 	Beam3 = 0.41,
 	Beam4 = 0.22,
-}
+} -- A bunch of values that determine the beams width (multiplied by engine width so the engine VFX is to size) 
 
 local EngineBeamsTransparency = {
 	Beam1 = .5,
 	Beam2 = .75,
 	Beam3 = .7,
 	Beam4 = .7,
-}
+} -- The start transparency of every beam (the end is always 1) used to lerp their transparency
 
 local DefaultEngineColor = Color3.fromRGB(2, 33, 48)
 local FullEngineColor = Color3.fromRGB(7, 110, 165)
 
 local WarpEngineColor = Color3.fromRGB(255, 15, 159)
 
+local CustomControlsList = {KeyCodes.X, KeyCodes.C, KeyCodes.B, KeyCodes.LeftShift, KeyCodes.RightShift, KeyCodes.LeftAlt}
+
 -- Functions
 
-local function lerp(a, b, t)
+local function lerp(a, b, t) -- simple linear interpolation used here for VFX
 	return a + (b - a) * t
 end
 
-local TInsert = table.insert
+local TInsert = table.insert -- this function has been used alot so decided to set it to a variable
 
 --[[Script]]--
 
@@ -133,7 +136,7 @@ local Pilot = {}
 function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	local DefaultShipModel:Model = FormattedItems[ShipType].Model
 
-	PlayerControls:Disable()
+	PlayerControls:Disable() -- Forcibly disabling player movement
 	local Connections = {}
 	local Running = true
 
@@ -166,9 +169,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		Val.Name = Name
 		local BVal = Instance.new('BoolValue') -- True if tweening
 		BVal.Value = false
-		BVal.Name = "Tweening"
 		local BEvent = Instance.new('BindableEvent') -- Event fired when players presses control
-		BEvent.Name = "Controlled"
 		Movement[Name] = {Val, BVal, BEvent}
 	end
 
@@ -184,10 +185,9 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 
 	local DefaultDistance = CameraModule.GetFitDistance(DefaultShipModel:GetPivot().Position, DefaultShipModel, Camera)
 
-	local CameraOrientation = CFrame.fromEulerAnglesXYZ(0,0,0)
-	local CameraAxis = Vector2.new(0,0)
-	local CameraZoom = 2
-	local CameraZoom_Current = Instance.new('NumberValue')
+	local CameraAxis = Vector2.new(0,0) -- Camera axis in degrees
+	local CameraZoom = 2 -- Actual camera zoom
+	local CameraZoom_Current = Instance.new('NumberValue') -- Imaginary camera zoom used for tweening
 	CameraZoom_Current.Value = CameraZoom
 
 	local ZoomTween = TweenInfo.new(0.1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
@@ -259,7 +259,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	local CameraLocked = false
 	
 	local function UpdateDistance(zoom) -- Tweens Camera Zoom Value
-		if zoom < MinimumZoom or zoom > MaximumZoom or ZoomLocked.Value then return end
+		if zoom < MinimumZoom or zoom > MaximumZoom then return end
 		CameraZoom = zoom
 		if not ZoomingIn then
 			local Tween = TweenService:Create(CameraZoom_Current, ZoomTween, {Value = CameraZoom})
@@ -314,7 +314,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 				TInsert(Connections, Movement['Speed'][3].Event:Once(function()
 					Tween:Cancel()
 				end))
-				return Tween
+				return Tween -- Returning the tween so caller can use the completed event
 			end
 		end,
 		[KeyCodes.C] = function(start)
@@ -330,6 +330,11 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end,
 		[KeyCodes.LeftShift] = ZoomCamera,
 		[KeyCodes.RightShift] = ZoomCamera,
+		[KeyCodes.LeftAlt] = function(start)
+			if start == false and CameraLocked then
+				CameraAxis = Vector2.new(0,0)
+			end
+		end,
 	}
 	
 	StopShip.OnInvoke = function()
@@ -337,47 +342,44 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	end
 
 	TInsert(Connections, Mouse.Move:Connect(function()
-		if (CameraLocked == false) and (CameraMovementLocked.Value == false) then
-			local Moved = UserInputService:GetMouseDelta()/(3 * (ZoomingIn and 3 or 1))
-			local ResultX, ResultY = (Moved.X + CameraAxis.X) % 360, (Moved.Y + CameraAxis.Y) % 360
-			CameraAxis = Vector2.new(ResultX, ResultY)
+		if (CameraMovementLocked.Value == false) then
+			if (CameraLocked == false) or (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)) then
+				local Moved = UserInputService:GetMouseDelta()/(3 * (ZoomingIn and 3 or 1)) -- Getting the amount of pixels the mouse moved
+				local ResultX, ResultY = (Moved.X + CameraAxis.X) % 360, (Moved.Y + CameraAxis.Y) % 360 -- Adding it to the currentCameraAxis and making sure it's within 360 degrees
+				CameraAxis = Vector2.new(ResultX, ResultY) -- Updating CameraAxis with the new degrees
+			end
 		end
 	end))
 
 	TInsert(Connections, Mouse.WheelForward:Connect(function()
 		if CameraZoomLocked.Value then return end
-		UpdateDistance(CameraZoom-0.5)
+		UpdateDistance(CameraZoom-0.5) -- Updating the camera zoom with the current CameraZoom minus .5
 	end))
 
 	TInsert(Connections, Mouse.WheelBackward:Connect(function()
 		if CameraZoomLocked.Value then return end
-		UpdateDistance(CameraZoom+0.5)
+		UpdateDistance(CameraZoom+0.5) -- Updating the camera zoom with the current CameraZoom plus .5
 	end))
-
-	TInsert(Connections, UserInputService.InputBegan:Connect(function(input, GPE)
-		if GPE then return end
-		local InputFunction = CustomControls[input.KeyCode]
-		if InputFunction then
-			InputFunction(true)
+	
+	-- Function below handles the extra controls for the ship system most do not have any real functions they are mostly just logic except probably the stop one
+	
+	ContextActionService:BindAction("CustomControls", function(_, inputState, inputObject: InputObject)
+		if inputState == Enum.UserInputState.Begin then
+			CustomControls[inputObject.KeyCode](true)
+		elseif inputState == Enum.UserInputState.End then
+			CustomControls[inputObject.KeyCode](false)
 		end
-	end))
-	TInsert(Connections, UserInputService.InputEnded:Connect(function(input, GPE)
-		if GPE then return end
-		local InputFunction = CustomControls[input.KeyCode]
-		if InputFunction then
-			InputFunction(false)
-		end
-	end))
+	end, false, table.unpack(CustomControlsList))
 
 	Camera.CameraType = Enum.CameraType.Scriptable
 
 	local function UpdateControls()
-		if not ChatBar:IsFocused() then -- I REFUSE to use ContextActionService or InputBegan i'am an independent programmer that does NOT rely on funny roblox stuff
+		if not ChatBar:IsFocused() then -- I'am not using ContextActionService or UserInputService for *reasons* so i got the chatBar and making sure the player is not typing
 			for n, t in pairs(Controls) do
-				local KeyStart = UserInputService:IsKeyDown(t[2]) and 1 or 0 -- Ok listen, listen. weird but it's done for a reason i care not explain.
-				local KeyEnd = UserInputService:IsKeyDown(t[3]) and -1 or 0
-				local v = KeyStart + KeyEnd
-				Controls[n][1] = v
+				local KeyStart = UserInputService:IsKeyDown(t[2]) and 1 or 0 -- Is the positive key down
+				local KeyEnd = UserInputService:IsKeyDown(t[3]) and -1 or 0 -- Is the negative key down
+				local v = KeyStart + KeyEnd -- Add both values together (both down then it's gonna be 0)
+				Controls[n][1] = v -- Set it in the table for the UpdateMovement function to use
 			end
 		end
 	end
@@ -406,171 +408,13 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	
 	-- VFX Zone [END]
 	
-	local LastUpdate = 0
+	local ShipAmbience = Primary:WaitForChild('ShipAmbience') -- An ambience SFX for the ship also acts as engine SFX
 	
-	local LastPitch = 0
-	local LastYaw = 0
-	
-	local ShipAmbience = Primary:WaitForChild('ShipAmbience')
+	local function RenderEngine()
+		local EngineV = math.clamp(Movement["Speed"][1].Value/SpeedRange.Max, 0, 1) -- How fast the ship is moving based on its max speed [0,1]
+		
+		-- There's nothing really to explain in the code below since it's pure VFX & SFX so im not gonna bother
 
-	local function UpdateMovement(DeltaTime)
-		LastUpdate += DeltaTime
-		
-		CurrentSpeed.Value = Movement['Speed'][1].Value * Dividen
-		
-		local CPitch = Movement["Pitch"][1].Value
-		local CYaw = Movement["Yaw"][1].Value
-		
-		local NewPitch = if CPitch > 0 then 1 elseif CPitch < 0 then -1 else 0
-		local NewYaw = if CYaw > 0 then 1 elseif CYaw < 0 then -1 else 0
-		
-		if NewPitch ~= LastPitch then
-			UpdatePitch:FireServer(NewPitch)
-			LastPitch = NewPitch
-		end
-		if NewYaw ~= LastYaw then
-			UpdateYaw:FireServer(NewYaw)
-			LastYaw = NewYaw
-		end
-		
-		if LastUpdate >= .5 then
-			UpdateSpeed:FireServer(Movement['Speed'][1].Value)
-			LastUpdate = 0
-		end
-		
-		-- VFX Zone [START]
-		
-		if MovementDisabled.Value then 
-			Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value)
-			Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value)
-			
-			if IsCharging.Value then return end
-			
-			if InWarp.Value == true then
-				
-				local EngineV = 2
-				
-				if WarpTime.Value < 1 then
-					EngineV = WarpTime.Value * 2
-				elseif WarpTimeLeft.Value < 2 then
-					EngineV = WarpTimeLeft.Value
-				end
-
-				for _, Engine in Engines:GetChildren() do
-					local Neon: Part = Engine.Neon
-					local SizeY = Neon.Size.Y
-
-					Neon.Color = DefaultEngineColor:Lerp(WarpEngineColor, math.clamp(WarpTimeLeft.Value/2, 0, 1))
-
-					local StartAttachment = Neon:FindFirstChild("StartAttachment")
-					local Particle: ParticleEmitter = StartAttachment:FindFirstChild("Emitter")
-					Particle.Lifetime = NumberRange.new(SizeY * EngineV / 4)
-					Particle.Rate = 100
-					Particle.Speed = NumberRange.new(EngineAttachments.EndAttachment1 * SizeY * 4)
-					StartAttachment.CFrame = CFrame.lookAt(StartAttachment.Position, Neon.EndAttachment1.Position)
-
-					for _, Child in Neon:GetChildren() do
-						if Child:IsA("Attachment") then
-							local Length = EngineAttachments[Child.Name]
-							Child.Position = Vector3.new(Length * SizeY * EngineV * 1.5, Movement["Pitch"][1].Value * EngineV * Length/3, Movement["Yaw"][1].Value * EngineV * Length/3)
-						elseif Child:IsA("Beam") then
-							Child.LightEmission = EngineV
-							Child.LightInfluence = EngineV
-							Child.Transparency = NumberSequence.new(lerp(1, EngineBeamsTransparency[Child.Name], EngineV),1)
-						end
-					end
-				end
-			else
-				local EngineV = Movement["Speed"][1].Value/SpeedRange.Max
-				
-				ShipAmbience.Volume = lerp(.25, 2, EngineV)
-				ShipAmbience.PitchEffect.Octave = lerp(1,1.25, EngineV)
-
-				for _, Engine in Engines:GetChildren() do
-					local Neon: Part = Engine.Neon
-					local SizeY = Neon.Size.Y
-
-					Neon.Color = DefaultEngineColor:Lerp(FullEngineColor, EngineV)
-
-					local StartAttachment = Neon:FindFirstChild("StartAttachment")
-					local Particle: ParticleEmitter = StartAttachment:FindFirstChild("Emitter")
-					Particle.Lifetime = NumberRange.new(SizeY * EngineV)
-					Particle.Rate = 50 * (EngineV)
-					Particle.Speed = NumberRange.new(EngineAttachments.EndAttachment1 * SizeY)
-					StartAttachment.CFrame = CFrame.lookAt(StartAttachment.Position, Neon.EndAttachment1.Position)
-
-					for _, Child in Neon:GetChildren() do
-						if Child:IsA("Attachment") then
-							local Length = EngineAttachments[Child.Name]
-							Child.Position = Vector3.new(Length * SizeY * EngineV * 1.5, Movement["Pitch"][1].Value * EngineV * Length/3, Movement["Yaw"][1].Value * EngineV * Length/3)
-						elseif Child:IsA("Beam") then
-							Child.LightEmission = EngineV
-							Child.LightInfluence = EngineV
-							Child.Transparency = NumberSequence.new(lerp(1, EngineBeamsTransparency[Child.Name], EngineV),1)
-						end
-					end
-				end
-			end
-			
-			return
-		end
-		
-		-- VFX Zone [END]
-		
-		-- Speed
-		do
-			local AccelHeld = Controls['Accel'][1]
-			local SpeedValue = Movement['Speed'][1].Value
-			local AccelV =  (if AccelHeld == 1 then AccelRange.Max elseif AccelHeld == -1 then (if SpeedValue > 0 then AccelRange.Min else AccelRange.Min/3) else 0)
-			local NewAccel = AccelV * DeltaTime
-			if NewAccel ~= 0 then
-				Movement['Speed'][3]:Fire()
-				local NewSpeed = SpeedValue + NewAccel
-				if NewSpeed > SpeedRange.Max then NewSpeed = SpeedRange.Max end
-				if NewSpeed < SpeedRange.Min then NewSpeed = SpeedRange.Min end
-				Movement['Speed'][1].Value = NewSpeed
-
-			elseif SpeedValue < 0 then
-				local NewSpeed = SpeedValue + -(AccelRange.Min * DeltaTime)/3
-				if NewSpeed > 0 then Movement['Speed'][1].Value = 0 else
-					Movement['Speed'][1].Value = NewSpeed
-				end
-			end
-		end
-
-		-- Pitch, Roll, Yaw
-		do
-			for _, MovementType in pairs(DirectionalMovements) do
-				local MovementHeld = Controls[MovementType][1]
-				local MovementCur = Movement[MovementType]
-				local MovementValueObject = MovementCur[1]
-				local MovementValue = MovementValueObject.Value
-				local MovementTweening = MovementCur[2]
-				local MovementRange = DirectionalRanges[MovementType]
-				local MovementV = (if MovementHeld == 1 then MovementRange.Max elseif MovementHeld == -1 then MovementRange.Min else 0)
-				local NewMovement = (MovementV * DeltaTime) * 2
-				if NewMovement ~= 0 then
-					MovementTweening.Value = false
-					MovementCur[3]:Fire()
-					local NewSpeed = MovementValue + NewMovement
-					if NewSpeed > MovementRange.Max then NewSpeed = MovementRange.Max end
-					if NewSpeed < MovementRange.Min then NewSpeed = MovementRange.Min end
-					MovementValueObject.Value = NewSpeed
-				elseif MovementTweening.Value == false then
-					MovementTweening.Value = true
-					local Tween = TweenService:Create(MovementValueObject, TweenInfo.new(math.abs(MovementValue)/2, Enum.EasingStyle.Linear), {Value = 0})
-					Tween:Play()
-					TInsert(Connections, MovementCur[3].Event:Once(function()
-						Tween:Cancel()
-					end))
-				end
-			end
-		end
-		
-		-- VFX Zone [START]
-		
-		local EngineV = Movement["Speed"][1].Value/SpeedRange.Max
-		
 		ShipAmbience.Volume = lerp(.25, 2, EngineV)
 		ShipAmbience.PitchEffect.Octave = lerp(1,1.25, EngineV)
 
@@ -579,7 +423,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 			local SizeY = Neon.Size.Y
 
 			Neon.Color = DefaultEngineColor:Lerp(FullEngineColor, EngineV)
-			
+
 			local StartAttachment = Neon:FindFirstChild("StartAttachment")
 			local Particle: ParticleEmitter = StartAttachment:FindFirstChild("Emitter")
 			Particle.Lifetime = NumberRange.new(SizeY * EngineV)
@@ -598,22 +442,167 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 				end
 			end
 		end
+	end
+	
+	local LastUpdate = 0
+
+	local LastPitch = 0
+	local LastYaw = 0
+	
+	local function UpdateMovement(DeltaTime)
+		LastUpdate += DeltaTime
+		
+		CurrentSpeed.Value = Movement['Speed'][1].Value * Dividen
+		
+		-- The block of code below is used to update the server on the ships speed and if the player is currently pitching or yawing used to replicate engine effects to other clients
+		
+		local CPitch = Movement["Pitch"][1].Value
+		local CYaw = Movement["Yaw"][1].Value
+		
+		local NewPitch = if CPitch > 0 then 1 elseif CPitch < 0 then -1 else 0
+		local NewYaw = if CYaw > 0 then 1 elseif CYaw < 0 then -1 else 0
+		
+		if NewPitch ~= LastPitch then -- Making sure to not send duplicate data to server wasting network
+			UpdatePitch:FireServer(NewPitch) -- Updating the server on new pitch
+			LastPitch = NewPitch
+		end
+		if NewYaw ~= LastYaw then -- Making sure to not send duplicate data to server wasting network
+			UpdateYaw:FireServer(NewYaw) -- Updating the server on new yaw
+			LastYaw = NewYaw
+		end
+		
+		if LastUpdate >= .5 then -- Instead of updating every change with a cooldown i opted for this for anti-cheat reasons
+			UpdateSpeed:FireServer(Movement['Speed'][1].Value) -- Updating the server on new speed
+			LastUpdate = 0
+		end
+		
+		-- VFX Zone [START]
+		
+		if MovementDisabled.Value then 
+			-- I'am updating the velocities here since there's a return statement at the end of this scope wich wouldn't let the code below us wich includes the code to update the velocities to run
+			Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value)
+			Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value)
+			
+			if IsCharging.Value then return end -- Safety check
+			
+			if InWarp.Value == true then -- Custom engine VFX for when in warp
+				
+				-- There's nothing really to explain in the code below since it's pure VFX & SFX so im not gonna bother
+				
+				local EngineV = 2
+				
+				if WarpTime.Value < 1 then
+					EngineV = WarpTime.Value * 2
+				elseif WarpTimeLeft.Value < 2 then
+					EngineV = WarpTimeLeft.Value
+				end
+
+				for _, Engine in Engines:GetChildren() do
+					local Neon: Part = Engine.Neon
+					local SizeY = Neon.Size.Y
+
+					Neon.Color = DefaultEngineColor:Lerp(WarpEngineColor, math.clamp(WarpTimeLeft.Value/2, 0, 1))
+
+					local StartAttachment = Neon:FindFirstChild("StartAttachment")
+					local Particle: ParticleEmitter = StartAttachment:FindFirstChild("Emitter")
+					Particle.Lifetime = NumberRange.new(SizeY * EngineV / 4)
+					Particle.Rate = 50 * EngineV
+					Particle.Speed = NumberRange.new(EngineAttachments.EndAttachment1 * SizeY * EngineV * 2)
+					StartAttachment.CFrame = CFrame.lookAt(StartAttachment.Position, Neon.EndAttachment1.Position)
+
+					for _, Child in Neon:GetChildren() do
+						if Child:IsA("Attachment") then
+							local Length = EngineAttachments[Child.Name]
+							Child.Position = Vector3.new(Length * SizeY * EngineV * 1.5, Movement["Pitch"][1].Value * EngineV * Length/3, Movement["Yaw"][1].Value * EngineV * Length/3)
+						elseif Child:IsA("Beam") then
+							Child.LightEmission = EngineV
+							Child.LightInfluence = EngineV
+							Child.Transparency = NumberSequence.new(lerp(1, EngineBeamsTransparency[Child.Name], EngineV),1)
+						end
+					end
+				end
+			else RenderEngine()
+			end
+			
+			return
+		end
 		
 		-- VFX Zone [END]
 		
-		Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value)
-		Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value)
+		-- Ignore the weird do ends, i was going through a phase.
+		
+		-- Speed
+		do
+			local AccelHeld = Controls['Accel'][1] -- Value gotten from the UpdateControls indicating the movements value (-1 if negative is being held +1 of positive is being held and 0 if both or none are being held)
+			local SpeedValue = Movement['Speed'][1].Value -- Current speed
+			local AccelV =  (if AccelHeld == 1 then AccelRange.Max elseif AccelHeld == -1 then (if SpeedValue > 0 then AccelRange.Min else AccelRange.Min/3) else 0)
+			local NewAccel = AccelV * DeltaTime -- Speed to be added
+			if NewAccel ~= 0 then
+				Movement['Speed'][3]:Fire() -- Fires event to stop that tells other part of the script that player tried to move (used for stopShip)
+				local NewSpeed = math.clamp(SpeedValue + NewAccel, SpeedRange.Min, SpeedRange.Max) -- Making sure movement doesn't go over max and min
+				Movement['Speed'][1].Value = NewSpeed -- Setting the new speed for later use
+
+			elseif SpeedValue < 0 then -- Stopping the ship if player is going backwards and is not holding down any control
+				local NewSpeed = SpeedValue - (AccelRange.Min * DeltaTime)/3 -- Getting the new speed, the passive stopping speed is divided by 3 to encourage players to stop manually by throttling down
+				Movement['Speed'][1].Value = math.clamp(NewSpeed, -Infinity, 0) -- Setting the new speed for later use
+			end
+		end
+
+		-- Pitch, Roll, Yaw
+		do
+			for _, MovementType in pairs(DirectionalMovements) do
+				local MovementHeld = Controls[MovementType][1] -- Value gotten from the UpdateControls indicating the movements value (-1 if negative is being held +1 of positive is being held and 0 if both or none are being held)
+				local MovementCur = Movement[MovementType] -- List of values important to the movement
+				local MovementValueObject = MovementCur[1] -- Value used to store the speed of the movement
+				local MovementValue = MovementValueObject.Value --- How fast the movement is going
+				local MovementTweening = MovementCur[2] -- Value indicating if the movement value is being tweened 
+				local MovementRange = DirectionalRanges[MovementType] -- Min Max range of movement
+				local MovementV = (if MovementHeld == 1 then MovementRange.Max elseif MovementHeld == -1 then MovementRange.Min else 0)
+				local NewMovement = (MovementV * DeltaTime) * 2 -- Acceleration of movement
+				if NewMovement ~= 0 then
+					MovementTweening.Value = false
+					MovementCur[3]:Fire()
+					local NewSpeed = math.clamp(MovementValue + NewMovement, MovementRange.Min, MovementRange.Max) -- Making sure movement doesn't go over max and min
+					MovementValueObject.Value = NewSpeed
+				elseif MovementTweening.Value == false then -- Resetting the movement to 0 in a tween
+					MovementTweening.Value = true -- Debounce for next frame
+					local Tween = TweenService:Create(MovementValueObject, TweenInfo.new(math.abs(MovementValue)/2, Enum.EasingStyle.Linear), {Value = 0})
+					Tween:Play()
+					TInsert(Connections, Tween.Completed:Once(function(playBackState)
+						MovementTweening.Value = false
+					end))
+					TInsert(Connections, MovementCur[3].Event:Once(function() -- Cancelling the stop tween of movement if player tries to move again
+						Tween:Cancel()
+					end))
+				end
+			end
+		end
+
+		RenderEngine()
+		
+		Angular.AngularVelocity = Vector3.new(Movement["Pitch"][1].Value, Movement["Yaw"][1].Value, Movement["Roll"][1].Value) -- Using all the values gained from the block above and applying to angular velocity
+		Linear.VectorVelocity = Vector3.new(0, Movement['Strafe'][1].Value, -Movement['Speed'][1].Value) -- Using all the values gained from the block above and applying to linear velocity
 	end
+	
+	-- Function below updates the camera CFrame with all values gathered
 
 	local function UpdateCamera()
 		local CameraOffsetVal = CameraOffset.Value
+		local CameraOrientation
 		if LookingBack then
-			CameraOrientation = CFrame.fromEulerAnglesYXZ(-math.rad(CameraAxis.Y), fullRad-math.rad(CameraAxis.X), 0)
+			CameraOrientation = CFrame.fromEulerAnglesYXZ(-math.rad(CameraAxis.Y), fullRad-math.rad(CameraAxis.X), 0) -- Reversing the camera X angle
 		else
 			CameraOrientation = CFrame.fromEulerAnglesYXZ(-math.rad(CameraAxis.Y), -math.rad(CameraAxis.X), 0)
 		end
-		Camera.CFrame = CentreAttachment.WorldCFrame * CameraOrientation * CFrame.new(0 + CameraOffsetVal.X,ModelSize.Y + CameraOffsetVal.Y, DefaultDistance * CameraZoom_Current.Value + CameraOffsetVal.Z)
+		Camera.CFrame = CentreAttachment.WorldCFrame * CameraOrientation * CFrame.new(0 + CameraOffsetVal.X,ModelSize.Y + CameraOffsetVal.Y, DefaultDistance * CameraZoom_Current.Value + CameraOffsetVal.Z) -- Centring the camera at the ships PrimaryPart, offsetting it by the ships Y size and zoom + Default Zoom Distance figured for this ship adding all the offsetValues and then adding the angles
 	end
+	
+	RunService:BindToRenderStep("SHIP_CAMERA", RenderPriority.SHIP_CAMERA, UpdateCamera)
+	RunService:BindToRenderStep("SHIP_INPUT", RenderPriority.SHIP_INPUT, UpdateControls)
+	RunService:BindToRenderStep("SHIP_MOVEMENT", RenderPriority.SHIP_MOVEMENT, UpdateMovement)
+	
+	-- In the function below we are disconnecting all the connections we've made and resetting the client to its original state before this pilot was created
+	-- Currently i'am not setting the camera back to the player character since that will be handled by another script
 
 	local function Destroy()
 		Running = false
@@ -623,14 +612,10 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		RunService:UnbindFromRenderStep("SHIP_CAMERA")
 		RunService:UnbindFromRenderStep("SHIP_INPUT")
 		RunService:UnbindFromRenderStep("SHIP_MOVEMENT")
-		PlayerControls:Enable()
+		PlayerControls:Enable() -- Enabling back player movement
 		Linear.VectorVelocity = Vector3.new(0,0,0)
 		Angular.AngularVelocity = Vector3.new(0,0,0)
 	end
-	
-	RunService:BindToRenderStep("SHIP_CAMERA", RenderPriority.SHIP_CAMERA, UpdateCamera)
-	RunService:BindToRenderStep("SHIP_INPUT", RenderPriority.SHIP_INPUT, UpdateControls)
-	RunService:BindToRenderStep("SHIP_MOVEMENT", RenderPriority.SHIP_MOVEMENT, UpdateMovement)
 
 	return Destroy
 end
