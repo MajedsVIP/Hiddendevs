@@ -137,21 +137,21 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	local DefaultShipModel:Model = FormattedItems[ShipType].Model
 
 	PlayerControls:Disable() -- Forcibly disabling player movement
-	local Connections = {}
-	local Running = true
+	local Connections = {} -- List of connections later disconnected when pilot is destroyed
 
 	local SpeedRange = NavigationStats.Speed -- Range of Minimum & Maximum speed
 	local AccelRange = NavigationStats.Accel -- Range for Negative & Positive speed accel (Min = Negative, Max = Positive)
-	SpeedRange = NumberRange.new(SpeedRange.Min / Dividen, SpeedRange.Max / Dividen)
-	AccelRange = NumberRange.new(AccelRange.Min / Dividen, AccelRange.Max / Dividen)
+	SpeedRange = NumberRange.new(SpeedRange.Min / Dividen, SpeedRange.Max / Dividen) -- Dividing speed by dividen since it's distance based
+	AccelRange = NumberRange.new(AccelRange.Min / Dividen, AccelRange.Max / Dividen)-- Dividing accel by dividen since it's distance based
 
 	local Primary = ShipModel.PrimaryPart -- Seat
-	local CentreAttachment = Primary.CentreAttachment
-	local Angular: AngularVelocity = Primary.Angular -- Angular Velocity
-	local Linear: LinearVelocity = Primary.Linear -- Linear Velocity
+	local CentreAttachment = Primary.CentreAttachment -- Used to centre camera on ship
+	local Angular: AngularVelocity = Primary.Angular -- Used to rotate the ship
+	local Linear: LinearVelocity = Primary.Linear -- Used to move the ship
+	-- The 2 velocities above are relative to CentreAttachment
 	local Engines = ShipModel:WaitForChild('Structure'):WaitForChild('Engines')
 
-	local _, ModelSize = DefaultShipModel:GetBoundingBox()
+	local _, ModelSize = DefaultShipModel:GetBoundingBox() -- Later used to offset camera Y
 
 	local Controls = {
 		["Strafe"] = {0, KeyCodes.T, KeyCodes.G},
@@ -159,9 +159,9 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		["Pitch"] = {0, KeyCodes.S, KeyCodes.W},
 		["Roll"] = {0, KeyCodes.Q, KeyCodes.E},
 		["Yaw"] = {0, KeyCodes.A, KeyCodes.D},
-	} -- List of Positive and Negative controls - (Value, Positive, Negative)
+	} -- List of Positive and Negative controls - (Value, Positive, Negative)	First Value of each table is used in the UpdateMovement function
 
-	local Movement = {}
+	local Movement = {} -- A table containing crutial components for movement including the current speed of movement
 
 	local function CreateMovement(Name)
 		local Val = Instance.new('NumberValue') -- Speed of Movement
@@ -183,7 +183,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		DirectionalRanges[MovementType] = NavigationStats[MovementType]
 	end
 
-	local DefaultDistance = CameraModule.GetFitDistance(DefaultShipModel:GetPivot().Position, DefaultShipModel, Camera)
+	local DefaultDistance = CameraModule.GetFitDistance(DefaultShipModel:GetPivot().Position, DefaultShipModel, Camera) -- The zoom step in studs for this ship based on its model, used for the camera.
 
 	local CameraAxis = Vector2.new(0,0) -- Camera axis in degrees
 	local CameraZoom = 2 -- Actual camera zoom
@@ -195,14 +195,17 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	ShipShield.Transparency = 1
 
 	local ShieldTweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Linear)
-
+	
+	-- Bool variables below are all just use for logic i care not explain
 	local TweeningDown = false
 	local TweenedDown = false
 	local TweeningUp = false
 	local TweenedUp = false
-	local ShieldUp = ShipShield.CanQuery
+	local ShieldUp = ShipShield.CanQuery -- CanQuery is turned off by the server when shield goes down so might as well take advantage of it
 
-	local ShieldTweenZoom = 1.5
+	local ShieldTweenZoom = 1.5 -- The minimum zoom at wich the shield appears at
+	
+	-- Function below determines the players shields visiblity based on zoom
 
 	local function Update()
 		ShieldUp = ShipShield.CanQuery
@@ -252,7 +255,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end
 	end))
 
-	TInsert(Connections, CameraZoom_Current:GetPropertyChangedSignal('Value'):Connect(Update))
+	TInsert(Connections, CameraZoom_Current:GetPropertyChangedSignal('Value'):Connect(Update)) -- Updating the shield Visibility every time player zooms
 
 	local ZoomingIn = false
 	local LookingBack = false
@@ -267,7 +270,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		end
 	end
 
-	local function ZoomCamera(start)
+	local function ZoomCamera(start) -- Not to be confused with UpdateDistance this function zooms the camera to 0.5 and decreases FOV allowing for a fine adjustment of turret aim
 		
 		if start then
 			ZoomingIn = true
@@ -293,6 +296,8 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 		
 	end
 	
+	
+	-- The 2 events below were explained at their values variable
 	TInsert(Connections, CameraLockedValue:GetPropertyChangedSignal("Value"):Connect(function()
 		if CameraLockedValue.Value == true then
 			CameraLocked = true
@@ -307,7 +312,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	end))
 
 	local CustomControls = {
-		[KeyCodes.X] = function(start) 
+		[KeyCodes.X] = function(start) -- Stops the ship
 			if start then
 				local Tween = TweenService:Create(Movement['Speed'][1], TweenInfo.new(Movement['Speed'][1].Value/math.abs(AccelRange.Min), Enum.EasingStyle.Linear), {Value = 0})
 				Tween:Play()
@@ -317,7 +322,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 				return Tween -- Returning the tween so caller can use the completed event
 			end
 		end,
-		[KeyCodes.C] = function(start)
+		[KeyCodes.C] = function(start) -- Locks camera to the front
 			if (start) and CameraLockedValue.Value == false then
 				CameraLocked = not CameraLocked
 				if CameraLocked then
@@ -325,12 +330,12 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 				end
 			end
 		end,
-		[KeyCodes.B] = function(start)
+		[KeyCodes.B] = function(start) -- Reverses the camera X angle
 			LookingBack = start
 		end,
 		[KeyCodes.LeftShift] = ZoomCamera,
 		[KeyCodes.RightShift] = ZoomCamera,
-		[KeyCodes.LeftAlt] = function(start)
+		[KeyCodes.LeftAlt] = function(start) -- Allows Player to peek while camera is locked
 			if start == false and CameraLocked then
 				CameraAxis = Vector2.new(0,0)
 			end
@@ -343,7 +348,7 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 
 	TInsert(Connections, Mouse.Move:Connect(function()
 		if (CameraMovementLocked.Value == false) then
-			if (CameraLocked == false) or (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)) then
+			if (CameraLocked == false) or (UserInputService:IsKeyDown(KeyCodes.LeftAlt)) then -- LeftAl allows player to peek even if the camera is locked
 				local Moved = UserInputService:GetMouseDelta()/(3 * (ZoomingIn and 3 or 1)) -- Getting the amount of pixels the mouse moved
 				local ResultX, ResultY = (Moved.X + CameraAxis.X) % 360, (Moved.Y + CameraAxis.Y) % 360 -- Adding it to the currentCameraAxis and making sure it's within 360 degrees
 				CameraAxis = Vector2.new(ResultX, ResultY) -- Updating CameraAxis with the new degrees
@@ -605,7 +610,6 @@ function Pilot.new(ShipModel:Model, NavigationStats, ShipType, ShipShield:Part)
 	-- Currently i'am not setting the camera back to the player character since that will be handled by another script
 
 	local function Destroy()
-		Running = false
 		for _, Connection in pairs(Connections) do
 			Connection:Disconnect()
 		end
